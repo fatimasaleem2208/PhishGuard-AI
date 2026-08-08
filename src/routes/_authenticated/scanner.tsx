@@ -100,7 +100,7 @@ function ScannerPage() {
 
   const mutation = useMutation({
     mutationFn: async () =>
-      analyze({ data: { subject, sender, body, useAi, source } }),
+      analyze({ data: { subject, sender, body, useAi, source: source === "manual" ? "paste" : "txt" } }),
     onSuccess: (data) => {
       setResult(data.scan as unknown as ScanRecord);
       queryClient.invalidateQueries();

@@ -1,36 +1,30 @@
 /**
- * Lovable AI Gateway client (server-only).
- * Uses the Responses API for GPT-5.6 models.
+ * Groq AI client (server-only).
+ * Uses Groq's OpenAI-compatible Chat Completions API.
  */
 
-const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/responses";
-export const DEFAULT_MODEL = "openai/gpt-5.6-sol";
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+
+export const DEFAULT_MODEL = "llama-3.3-70b-versatile";
 
 export class AiGatewayError extends Error {
   status: number;
+
   constructor(message: string, status: number) {
     super(message);
     this.status = status;
   }
 }
 
-interface ResponsesPayload {
-  output?: Array<{
-    type?: string;
-    content?: Array<{ type?: string; text?: string }>;
+interface GroqResponse {
+  choices?: Array<{
+    message?: {
+      content?: string;
+    };
   }>;
-  error?: { message?: string } | null;
-}
-
-function extractText(payload: ResponsesPayload): string {
-  const chunks: string[] = [];
-  for (const item of payload.output ?? []) {
-    if (item.type !== "message") continue;
-    for (const part of item.content ?? []) {
-      if (part.type === "output_text" && part.text) chunks.push(part.text);
-    }
-  }
-  return chunks.join("\n").trim();
+  error?: {
+    message?: string;
+  };
 }
 
 export async function callAi(options: {
@@ -38,36 +32,65 @@ export async function callAi(options: {
   input: Array<{ role: "user" | "assistant"; content: string }>;
   model?: string;
 }): Promise<string> {
-  const key = process.env["LOVABLE_API_KEY"];
-  if (!key) throw new AiGatewayError("AI service is not configured.", 500);
+  const key = process.env["GROQ_API_KEY"];
 
-  const response = await fetch(GATEWAY_URL, {
+  if (!key) {
+    throw new AiGatewayError("AI service is not configured.", 500);
+  }
+
+  const messages = [
+    {
+      role: "system" as const,
+      content: options.instructions,
+    },
+    ...options.input,
+  ];
+
+  const response = await fetch(GROQ_API_URL, {
     method: "POST",
     headers: {
-      "content-type": "application/json",
-      "Lovable-API-Key": key,
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
     },
     body: JSON.stringify({
       model: options.model ?? DEFAULT_MODEL,
-      instructions: options.instructions,
-      input: options.input,
+      messages,
+      temperature: 0.2,
     }),
   });
 
   if (response.status === 429) {
-    throw new AiGatewayError("AI rate limit reached. Please try again in a moment.", 429);
-  }
-  if (response.status === 402) {
-    throw new AiGatewayError("AI credits exhausted. Add credits to continue using AI features.", 402);
-  }
-  if (!response.ok) {
-    const detail = await response.text();
-    console.error("AI gateway error", response.status, detail.slice(0, 500));
-    throw new AiGatewayError("The AI service could not complete this request.", response.status);
+    throw new AiGatewayError(
+      "AI rate limit reached. Please try again in a moment.",
+      429,
+    );
   }
 
-  const payload = (await response.json()) as ResponsesPayload;
-  const text = extractText(payload);
-  if (!text) throw new AiGatewayError("The AI service returned an empty response.", 502);
+  if (!response.ok) {
+    const detail = await response.text();
+
+    console.error(
+      "Groq API error",
+      response.status,
+      detail.slice(0, 500),
+    );
+
+    throw new AiGatewayError(
+      "The AI service could not complete this request.",
+      response.status,
+    );
+  }
+
+  const payload = (await response.json()) as GroqResponse;
+
+  const text = payload.choices?.[0]?.message?.content?.trim();
+
+  if (!text) {
+    throw new AiGatewayError(
+      "The AI service returned an empty response.",
+      502,
+    );
+  }
+
   return text;
 }
